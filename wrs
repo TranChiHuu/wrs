@@ -9,9 +9,9 @@ ACTIVE_FILE="$HOME_DIR/active"
 usage() {
   cat >&2 <<U
 usage: wrs <command> [name]
-  save <name>         save current wrangler login as profile <name> and mark it active
-  login <name>        run 'wrangler login' and save the result as <name>
-  switch|use <name>   switch wrangler to profile <name>
+  login [name]        run 'wrangler login' and save it (name defaults to the account email)
+  switch|use <name>   switch wrangler to profile <name> (a unique prefix is enough)
+  save [name]         save the current wrangler login (name defaults to the account email)
   list                list profiles (* = active)
   remove [-f] <name>  delete profile (-f to remove the active one)
 U
@@ -27,7 +27,21 @@ init() {
 }
 
 valid_name() {
-  [[ "${1:-}" =~ ^[A-Za-z0-9._-]+$ && "$1" != .* ]] || die "invalid or missing profile name"
+  [[ "${1:-}" =~ ^[A-Za-z0-9@+._-]+$ && "$1" != .* ]] || die "invalid or missing profile name"
+}
+
+current_email() {
+  npx --yes wrangler whoami 2>/dev/null | sed -n 's/.*associated with the email \(.*\)\.$/\1/p' | head -1
+}
+
+resolve() {
+  [[ -n "${1:-}" ]] || die "missing profile name"
+  if [[ -f "$PROFILES/$1.toml" ]]; then echo "$1"; return; fi
+  local m=()
+  shopt -s nullglob
+  for f in "$PROFILES/$1"*.toml; do m+=("$(basename "$f" .toml)"); done
+  [[ ${#m[@]} -eq 1 ]] || die "no unique profile matching: $1"
+  echo "${m[0]}"
 }
 
 active() { [[ -f "$ACTIVE_FILE" ]] && cat "$ACTIVE_FILE" || true; }
@@ -55,15 +69,21 @@ sync_active() {
 }
 
 cmd_save() {
-  valid_name "${1:-}"
   [[ -f "$CFG" ]] || die "no wrangler login found at $CFG"
-  atomic_copy "$CFG" "$PROFILES/$1.toml"
-  set_active "$1"
-  echo "saved current login as '$1' (active)"
+  local name="${1:-$(current_email)}"
+  valid_name "$name"
+  atomic_copy "$CFG" "$PROFILES/$name.toml"
+  set_active "$name"
+  echo "saved current login as '$name' (active)"
 }
 
 cmd_login() {
-  valid_name "${1:-}"
+  [[ -z "${1:-}" ]] || valid_name "$1"
+  if [[ -z "$(active)" && -f "$CFG" ]]; then
+    local cur
+    cur="$(current_email)"
+    [[ -n "$cur" ]] && cmd_save "$cur"
+  fi
   sync_active
   mkdir -p "$(dirname "$CFG")"
   local aside=""
@@ -73,9 +93,11 @@ cmd_login() {
   fi
   if npx wrangler login && [[ -f "$CFG" ]]; then
     [[ -n "$aside" ]] && rm -f "$aside"
-    atomic_copy "$CFG" "$PROFILES/$1.toml"
-    set_active "$1"
-    echo "logged in and saved as '$1' (active)"
+    local name="${1:-$(current_email)}"
+    valid_name "$name"
+    atomic_copy "$CFG" "$PROFILES/$name.toml"
+    set_active "$name"
+    echo "logged in and saved as '$name' (active)"
   else
     rm -f "$CFG"
     [[ -n "$aside" ]] && mv "$aside" "$CFG"
@@ -84,13 +106,13 @@ cmd_login() {
 }
 
 cmd_switch() {
-  valid_name "${1:-}"
-  [[ -f "$PROFILES/$1.toml" ]] || die "no such profile: $1"
+  local name
+  name="$(resolve "${1:-}")"
   sync_active
   mkdir -p "$(dirname "$CFG")"
-  atomic_copy "$PROFILES/$1.toml" "$CFG"
-  set_active "$1"
-  echo "active profile: $1"
+  atomic_copy "$PROFILES/$name.toml" "$CFG"
+  set_active "$name"
+  echo "active profile: $name"
 }
 
 cmd_list() {

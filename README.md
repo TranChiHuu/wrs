@@ -16,15 +16,16 @@ Requires bash and `npx wrangler`. Written for macOS; on Linux set `WRS_WRANGLER_
 ## Usage
 
 ```bash
-wrs save work        # save the current wrangler login as "work"
-wrs login personal   # run `wrangler login` in the browser, save it as "personal"
-wrs switch work      # or: wrs use work
+wrs login            # browser login, saved under the account email
+wrs login personal   # same, with a custom name
+wrs use pers         # switch; a unique prefix is enough
 wrs list             # * marks the active profile
 wrs remove [-f] personal
 ```
 
 ## How it works
 
+- The first `wrs login` also saves the login wrangler already had, under its email.
 - Profiles are stored in `~/.config/wrs/profiles/<name>.toml` (mode 600). The active profile name is in `~/.config/wrs/active`.
 - Wrangler refreshes the OAuth token and rewrites its config, and refresh tokens rotate. Before every `switch` or `login`, `wrs` copies wrangler's current config back into the active profile so the refreshed token is kept.
 - `wrs` never runs `wrangler logout`, because logout revokes the token on Cloudflare's side and the saved profile would stop working.

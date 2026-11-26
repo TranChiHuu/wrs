@@ -35,5 +35,17 @@ ok "failed login restores" 'grep -q KEEP "$WRS_WRANGLER_CONFIG" && [[ ! -f "$WRS
 printf '#!/bin/sh\nprintf "oauth_token = \\"NEW\\"\\n" > "$WRS_WRANGLER_CONFIG"\n' > "$T/bin/npx"
 PATH="$T/bin:$PATH" $W login c
 ok "login saves new" 'grep -q NEW "$WRS_HOME/profiles/c.toml" && [[ "$(cat "$WRS_HOME/active")" == c ]]'
+cat > "$T/bin/npx" <<'N'
+#!/bin/sh
+case "$*" in
+  *login*) printf 'oauth_token = "AUTO"\n' > "$WRS_WRANGLER_CONFIG" ;;
+  *whoami*) grep -q AUTO "$WRS_WRANGLER_CONFIG" && echo "You are logged in with an OAuth Token, associated with the email auto@x.io." || echo "You are logged in with an OAuth Token, associated with the email c@x.io." ;;
+esac
+N
+PATH="$T/bin:$PATH" $W login
+ok "login without name uses email" 'grep -q AUTO "$WRS_HOME/profiles/auto@x.io.toml" && [[ "$(cat "$WRS_HOME/active")" == auto@x.io ]]'
+PATH="$T/bin:$PATH" $W use c >/dev/null
+ok "switch by unique prefix" '[[ "$(cat "$WRS_HOME/active")" == c ]]'
+$W use zz 2>/dev/null; ok "no prefix match exit 1" '[[ $? -eq 1 ]]'
 rm -rf "$T"
 exit $fail
