@@ -30,7 +30,7 @@ $W switch 2>/dev/null; ok "missing name exit 1" '[[ $? -eq 1 ]]'
 $W switch nope 2>/dev/null; ok "unknown profile exit 1" '[[ $? -eq 1 ]]'
 mkdir -p "$T/bin"; printf '#!/bin/sh\nexit 1\n' > "$T/bin/npx"; chmod +x "$T/bin/npx"
 printf 'oauth_token = "KEEP"\n' > "$WRS_WRANGLER_CONFIG"
-PATH="$T/bin:$PATH" $W login c 2>/dev/null
+$W save k >/dev/null; PATH="$T/bin:$PATH" $W login c 2>/dev/null
 ok "failed login restores" 'grep -q KEEP "$WRS_WRANGLER_CONFIG" && [[ ! -f "$WRS_HOME/profiles/c.toml" ]]'
 printf '#!/bin/sh\nprintf "oauth_token = \\"NEW\\"\\n" > "$WRS_WRANGLER_CONFIG"\n' > "$T/bin/npx"
 PATH="$T/bin:$PATH" $W login c
@@ -47,5 +47,26 @@ ok "login without name uses email" 'grep -q AUTO "$WRS_HOME/profiles/auto@x.io.t
 PATH="$T/bin:$PATH" $W use c >/dev/null
 ok "switch by unique prefix" '[[ "$(cat "$WRS_HOME/active")" == c ]]'
 $W use zz 2>/dev/null; ok "no prefix match exit 1" '[[ $? -eq 1 ]]'
+printf '#!/bin/sh\ncase "$*" in *login*) printf "oauth_token = \\"X\\"\\n" > "$WRS_WRANGLER_CONFIG";; esac\n' > "$T/bin/npx"
+$W use c >/dev/null; cp "$WRS_HOME/profiles/c.toml" "$T/c.before"
+PATH="$T/bin:$PATH" $W login 2>/dev/null
+ok "unknown email restores and keeps profile" '[[ $? -ne 0 ]] && cmp -s "$WRS_WRANGLER_CONFIG" "$T/c.before" && cmp -s "$WRS_HOME/profiles/c.toml" "$T/c.before" && [[ "$(cat "$WRS_HOME/active")" == c ]]'
+rm -f "$WRS_HOME/active"
+PATH="$T/bin:$PATH" $W login 2>/dev/null
+ok "first login refuses when current email unknown" '[[ $? -ne 0 ]] && cmp -s "$WRS_WRANGLER_CONFIG" "$T/c.before"'
+cat > "$T/bin/npx" <<'N'
+#!/bin/sh
+case "$*" in
+  *login*) printf 'oauth_token = "SECOND"\n' > "$WRS_WRANGLER_CONFIG" ;;
+  *whoami*) grep -q SECOND "$WRS_WRANGLER_CONFIG" && echo "associated with the email second@x.io." || echo "associated with the email first@x.io." ;;
+esac
+N
+rm -rf "$WRS_HOME"; printf 'oauth_token = "FIRST"\n' > "$WRS_WRANGLER_CONFIG"
+PATH="$T/bin:$PATH" $W login >/dev/null
+ok "first login auto-saves existing login" 'grep -q FIRST "$WRS_HOME/profiles/first@x.io.toml" && grep -q SECOND "$WRS_HOME/profiles/second@x.io.toml" && [[ "$(cat "$WRS_HOME/active")" == second@x.io ]]'
+$W use first >/dev/null; ok "prefix switch to email profile" 'grep -q FIRST "$WRS_WRANGLER_CONFIG"'
+$W use "" 2>/dev/null; ok "empty name exit 1" '[[ $? -eq 1 ]]'
+$W use "" 2>/dev/null; $W use x 2>/dev/null; ok "ambiguous prefix refused" '[[ $? -eq 1 ]] && grep -q FIRST "$WRS_WRANGLER_CONFIG"'
+$W use ../etc 2>/dev/null; ok "path traversal refused" '[[ $? -eq 1 ]]'
 rm -rf "$T"
 exit $fail

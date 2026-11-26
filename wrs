@@ -82,26 +82,25 @@ cmd_login() {
   if [[ -z "$(active)" && -f "$CFG" ]]; then
     local cur
     cur="$(current_email)"
-    [[ -n "$cur" ]] && cmd_save "$cur"
+    [[ -n "$cur" ]] || die "cannot read the current login's email; save it first with: wrs save <name>"
+    cmd_save "$cur"
   fi
   sync_active
   mkdir -p "$(dirname "$CFG")"
-  local aside=""
+  local aside="" name=""
   if [[ -f "$CFG" ]]; then
     aside="$(mktemp "$CFG.wrs-aside.XXXXXX")"
     mv "$CFG" "$aside"
   fi
-  if npx wrangler login && [[ -f "$CFG" ]]; then
+  if npx wrangler login && [[ -f "$CFG" ]] && name="${1:-$(current_email)}" && [[ -n "$name" ]] && [[ "$name" =~ ^[A-Za-z0-9@+._-]+$ ]]; then
     [[ -n "$aside" ]] && rm -f "$aside"
-    local name="${1:-$(current_email)}"
-    valid_name "$name"
     atomic_copy "$CFG" "$PROFILES/$name.toml"
     set_active "$name"
     echo "logged in and saved as '$name' (active)"
   else
     rm -f "$CFG"
     [[ -n "$aside" ]] && mv "$aside" "$CFG"
-    die "login failed; previous login restored"
+    die "login failed or account email unknown (pass a name: wrs login <name>); previous login restored"
   fi
 }
 
