@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CFG="${WRS_WRANGLER_CONFIG:-$HOME/Library/Preferences/.wrangler/config/default.toml}"
+HOME_DIR="${WRS_HOME:-$HOME/.config/wrs}"
+PROFILES="$HOME_DIR/profiles"
+ACTIVE_FILE="$HOME_DIR/active"
+
+usage() {
+  cat >&2 <<U
+usage: wrs <command> [name]
+  save <name>         save current wrangler login as profile <name> and mark it active
+  login <name>        run 'wrangler login' and save the result as <name>
+  switch|use <name>   switch wrangler to profile <name>
+  list                list profiles (* = active)
+  remove [-f] <name>  delete profile (-f to remove the active one)
+U
+  exit 1
+}
+
+die() { echo "wrs: $*" >&2; exit 1; }
+
+init() {
+  umask 077
+  mkdir -p "$PROFILES"
+  chmod 700 "$HOME_DIR" "$PROFILES"
+}
+
+valid_name() {
+  [[ "${1:-}" =~ ^[A-Za-z0-9._-]+$ && "$1" != .* ]] || die "invalid or missing profile name"
+}
+
+active() { [[ -f "$ACTIVE_FILE" ]] && cat "$ACTIVE_FILE" || true; }
+
+set_active() {
+  printf '%s\n' "$1" > "$ACTIVE_FILE.tmp.$$"
+  mv "$ACTIVE_FILE.tmp.$$" "$ACTIVE_FILE"
+  chmod 600 "$ACTIVE_FILE"
+}
+
+atomic_copy() {
+  local src="$1" dst="$2" tmp
+  tmp="$(mktemp "$dst.tmp.XXXXXX")"
+  cp "$src" "$tmp"
+  chmod 600 "$tmp"
+  mv "$tmp" "$dst"
+}
+
+sync_active() {
+  local a
+  a="$(active)"
+  if [[ -n "$a" && -f "$PROFILES/$a.toml" && -f "$CFG" ]]; then
+    atomic_copy "$CFG" "$PROFILES/$a.toml"
+  fi
+}
+
+cmd_save() {
+  valid_name "${1:-}"
+  [[ -f "$CFG" ]] || die "no wrangler login found at $CFG"
+  atomic_copy "$CFG" "$PROFILES/$1.toml"
+  set_active "$1"
+  echo "saved current login as '$1' (active)"
+}
+
+cmd_login() {
+  valid_name "${1:-}"
+  sync_active
+  mkdir -p "$(dirname "$CFG")"
+  local aside=""
+  if [[ -f "$CFG" ]]; then
+    aside="$(mktemp "$CFG.wrs-aside.XXXXXX")"
+    mv "$CFG" "$aside"
+  fi
+  if npx wrangler login && [[ -f "$CFG" ]]; then
+    [[ -n "$aside" ]] && rm -f "$aside"
+    atomic_copy "$CFG" "$PROFILES/$1.toml"
+    set_active "$1"
+    echo "logged in and saved as '$1' (active)"
+  else
+    rm -f "$CFG"
+    [[ -n "$aside" ]] && mv "$aside" "$CFG"
+    die "login failed; previous login restored"
+  fi
+}
+
+cmd_switch() {
+  valid_name "${1:-}"
+  [[ -f "$PROFILES/$1.toml" ]] || die "no such profile: $1"
+  sync_active
+  mkdir -p "$(dirname "$CFG")"
+  atomic_copy "$PROFILES/$1.toml" "$CFG"
+  set_active "$1"
+  echo "active profile: $1"
+}
+
+cmd_list() {
+  local a f n
+  a="$(active)"
+  for f in "$PROFILES"/*.toml; do
+    [[ -e "$f" ]] || continue
+    n="$(basename "$f" .toml)"
+    if [[ "$n" == "$a" ]]; then echo "* $n"; else echo "  $n"; fi
+  done
+}
+
+cmd_remove() {
+  local force=0
+  if [[ "${1:-}" == "-f" ]]; then force=1; shift; fi
+  valid_name "${1:-}"
+  [[ -f "$PROFILES/$1.toml" ]] || die "no such profile: $1"
+  if [[ "$(active)" == "$1" && $force -eq 0 ]]; then
+    die "'$1' is active; use -f to remove it"
+  fi
+  rm -f "$PROFILES/$1.toml"
+  [[ "$(active)" == "$1" ]] && rm -f "$ACTIVE_FILE"
+  echo "removed '$1'"
+}
+
+[[ $# -ge 1 ]] || usage
+init
+cmd="$1"; shift
+case "$cmd" in
+  save) cmd_save "$@" ;;
+  login) cmd_login "$@" ;;
+  switch|use) cmd_switch "$@" ;;
+  list|ls) cmd_list ;;
+  remove|rm) cmd_remove "$@" ;;
+  *) usage ;;
+esac
